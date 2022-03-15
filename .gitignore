@@ -363,11 +363,11 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # ignore game files
-
-/D3D12PracticeProj/Metroid8.pak
-/D3D12PracticeProj/Metroid7.pak
-/D3D12PracticeProj/Metroid6.pak
-/D3D12PracticeProj/metroid5.pak
-/D3D12PracticeProj/Metroid4.pak
-/D3D12PracticeProj/Metroid3.pak
-/D3D12PracticeProj/Metroid1.pak
+/DxPrimePC/Metroid8.pak
+/DxPrimePC/Metroid7.pak
+/DxPrimePC/Metroid6.pak
+/DxPrimePC/metroid5.pak
+/DxPrimePC/Metroid4.pak
+/DxPrimePC/Metroid3.pak
+/DxPrimePC/Metroid2.pak
+/DxPrimePC/Metroid1.pak
