@@ -24,13 +24,36 @@ struct unnamedAsset
 	int32_t size;
 	int32_t offset;
 };
-struct TXTRHeader
+
+inline float asFloat(uint32_t i) { return reinterpret_cast<float&>(i); }
+
+struct nativeObject
 {
-	uint32_t format;
-	uint16_t width;
-	uint16_t height;
-	uint32_t mipCount;
+	std::vector<uint16_t> vertex_indices;
+	std::vector<uint16_t> normal_indices;
+	std::vector<uint16_t> color0_indices;
+	std::vector<uint16_t> color1_indices;
+	std::vector<uint16_t> tex0_indices;
+	std::vector<uint16_t> tex1_indices;
+	std::vector<uint16_t> tex2_indices;
+	std::vector<uint16_t> tex3_indices;
+	std::vector<uint16_t> tex4_indices;
+	std::vector<uint16_t> tex5_indices;
+	std::vector<uint16_t> tex6_indices;
 };
+
+struct unnamedAssetTableEntry
+{
+	uint32_t id;
+	void* nativeData = nullptr;
+	unnamedAsset* foreignData;
+};
+
+unnamedAssetTableEntry* unnamedAssetTable;
+uint32_t unnamedAssetTable_entries = 0;
+
+
+
 
 static int Unpack565(uint8_t const* packed, uint8_t* colour)
 {
@@ -51,6 +74,7 @@ static int Unpack565(uint8_t const* packed, uint8_t* colour)
 	// return the value
 	return value;
 }
+
 void DecompressColourGCN(uint32_t texWidth, uint8_t* rgba, void const* block)
 {
 	// get the block bytes
@@ -110,37 +134,118 @@ void DecompressColourGCN(uint32_t texWidth, uint8_t* rgba, void const* block)
 			}// - i % 4
 		}
 }
-const int BYTES_PER_PIXEL = 3; /// red, green, & blue
-const int FILE_HEADER_SIZE = 14;
-const int INFO_HEADER_SIZE = 40;
 
 
-inline float asFloat(uint32_t i) { return reinterpret_cast<float&>(i); }
-
-struct nativeObject
+struct TXTR_header
 {
-	std::vector<uint16_t> vertex_indices;
-	std::vector<uint16_t> normal_indices;
-	std::vector<uint16_t> color0_indices;
-	std::vector<uint16_t> color1_indices;
-	std::vector<uint16_t> tex0_indices;
-	std::vector<uint16_t> tex1_indices;
-	std::vector<uint16_t> tex2_indices;
-	std::vector<uint16_t> tex3_indices;
-	std::vector<uint16_t> tex4_indices;
-	std::vector<uint16_t> tex5_indices;
-	std::vector<uint16_t> tex6_indices;
+	uint32_t format;
+	uint16_t width;
+	uint16_t height;
+	uint32_t mipCount;
 };
-
-struct unnamedAssetTableEntry
+inline void parseTXTR(uint8_t* source, void** dest)
 {
-	uint32_t id;
-	void* nativeData;
-	unnamedAsset* foreignData;
-};
+	//dest should be nullptr, need to fill it with a pointer to the native data
+	//tbd: set up custom allocator for this
+	TXTR_header* header = reinterpret_cast<TXTR_header*>(source);
+	std::cout << std::hex << "format: ";
+	switch (_byteswap_ulong(header->format))
+	{
+	case 0x0:
+		std::cout << "I4\n";
+		break;
+	case 0x1:
+		std::cout << "I8\n";
+		break;
+	case 0x2:
+		std::cout << "IA4\n";
+		break;
+	case 0x3:
+		std::cout << "IA8\n";
+		break;
+	case 0x4:
+		std::cout << "C4\n";
+		break;
+	case 0x5:
+		std::cout << "C8\n";
+		break;
+	case 0x6:
+		std::cout << "C14x2\n";
+		break;
+	case 0x7:
+		std::cout << "RGB565\n";
+		break;
+	case 0x8:
+		std::cout << "RGB5A3\n";
+		break;
+	case 0x9:
+		std::cout << "RGBA8\n";
+		break;
+	case 0xA:
+		std::cout << "CMPR\n";
+		break;
+	}
 
-unnamedAssetTableEntry* unnamedAssetTable;
-uint32_t unnamedAssetTable_entries = 0;
+	const int imageWidth = _byteswap_ushort(header->width);
+	const int imageHeight = _byteswap_ushort(header->height);
+
+	std::cout << std::dec << "width: " << imageWidth << '\n';
+
+	std::cout << std::dec << "height: " << imageHeight << '\n';
+
+	std::cout << std::dec << "mips: " << _byteswap_ulong(header->mipCount) << '\n';
+
+	//std::cout << dest << '\n';
+	std::cout << std::hex << *reinterpret_cast<uint64_t*>(dest) << '\n';
+
+
+
+	int HBlocks = (imageWidth + 8 - 1) / 8;
+	int VBlocks = (imageHeight + 8 - 1) / 8;
+
+
+	int HBlocksm1 = (imageWidth / 2 + 8 - 1) / 8;
+	int VBlocksm1 = (imageHeight / 2 + 8 - 1) / 8;
+	int HBlocksm2 = (imageWidth / 4 + 8 - 1) / 8;
+	int VBlocksm2 = (imageHeight / 4 + 8 - 1) / 8;
+	int HBlocksm3 = (imageWidth / 8 + 8 - 1) / 8;
+	int VBlocksm3 = (imageHeight / 8 + 8 - 1) / 8;
+	int numblocks = HBlocks * VBlocks;
+
+	int blockSize = 32;
+
+	int imageSize = numblocks * blockSize;
+
+	uint32_t subGetLoc = sizeof(TXTR_header);
+	*dest = malloc(imageWidth * imageHeight * 4);
+	uint8_t* pixels = (uint8_t*)*dest;
+	for (int y = 0; y < imageHeight; y++)
+	{
+		for (int x = 0; x < imageWidth; x++)
+		{
+			pixels[(imageWidth * y + x) * 4 + 0] = (x + 1) % 16 < 2 || (y + 1) % 16 < 2 ? 0 : 255;
+			pixels[(imageWidth * y + x) * 4 + 1] = (x + 1) % 16 < 2 || (y + 1) % 16 < 2 ? 255 : 0;
+			pixels[(imageWidth * y + x) * 4 + 2] = 0;
+			pixels[(imageWidth * y + x) * 4 + 3] = 0xff;
+		}
+	}
+
+	for (int y = 0; y < imageHeight; y += 8)
+	{
+		for (int x = 0; x < imageWidth; x += 8)
+		{
+			//decode full dxt1 block, (4 sub blocks)
+			DecompressColourGCN(imageWidth, &pixels[4 * (y * imageWidth + x)], &source[subGetLoc]);
+			subGetLoc += 8;
+			DecompressColourGCN(imageWidth, &pixels[4 * ((y)*imageWidth + (x + 4))], &source[subGetLoc]);
+			subGetLoc += 8;
+			DecompressColourGCN(imageWidth, &pixels[4 * ((y + 4) * imageWidth + (x))], &source[subGetLoc]);
+			subGetLoc += 8;
+			DecompressColourGCN(imageWidth, &pixels[4 * ((y + 4) * imageWidth + (x + 4))], &source[subGetLoc]);
+			subGetLoc += 8;
+		}
+	}
+}
 
 struct STRGHeader
 {
@@ -315,6 +420,7 @@ inline pointer offsetPointer(pointer ptr, const uint32_t& amount) noexcept requi
 	uint8_t* v = reinterpret_cast<uint8_t*>(ptr) + amount;
 	return reinterpret_cast<pointer>(v);
 }
+
 
 std::vector<uint32_t> v_strings;
 inline void parseCMDL(uint8_t* source, void* dest)
@@ -969,6 +1075,13 @@ found:
 		&& unnamedAssetTable[targetIndex].foreignData->type.data[3] == 'L')
 	{
 		parseCMDL(uncompressed_data, &unnamedAssetTable[targetIndex].nativeData);
+	}
+	else if (unnamedAssetTable[targetIndex].foreignData->type.data[0] == 'T'
+		&& unnamedAssetTable[targetIndex].foreignData->type.data[1] == 'X'
+		&& unnamedAssetTable[targetIndex].foreignData->type.data[2] == 'T'
+		&& unnamedAssetTable[targetIndex].foreignData->type.data[3] == 'R')
+	{
+		parseTXTR(uncompressed_data, &(unnamedAssetTable[targetIndex].nativeData));
 	}
 	//unnamedAssetTable[targetIndex].nativeData = uncompressed_data;//TODO: placeholder, requires proper parsing
 	return unnamedAssetTable[targetIndex].nativeData;

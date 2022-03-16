@@ -265,7 +265,9 @@ int main()
 
 	const uint8_t* pak2Begin = indexPak(L"Metroid2.pak");
 
-	loadAsset(pak2Begin, 0xD3D3AB81);
+	//loadAsset(pak2Begin, 0x729EA8BA);
+	//loadAsset(pak2Begin, 0x8033012d);
+	//loadAsset(pak2Begin, 0x9304b76f);
 
 
 	// create the window
@@ -1242,20 +1244,32 @@ int main()
 
 	// Load the image from file
 
-	D3D12_RESOURCE_DESC textureDesc;
-	int imageBytesPerRow;
+	D3D12_RESOURCE_DESC textureDesc = {
+		.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+		.Alignment = 0, // may be 0, 4KB, 64KB, or 4MB. 0 will let runtime decide between 64KB and 4MB (4MB for multi-sampled textures)
+		.Width = 128, // width of the texture
+		.Height = 64, // height of the texture
+		.DepthOrArraySize = 1, // if 3d image, depth of 3d image. Otherwise an array of 1D or 2D textures (we only have one image, so we set 1)
+		.MipLevels = 1, // Number of mipmaps. We are not generating mipmaps for this texture, so we have only one level
+		.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // This is the dxgi format of the image (format of the pixels)
+		.SampleDesc = {.Count = 1, .Quality = 0},
+		.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN, // The arrangement of the pixels. Setting to unknown lets the driver choose the most efficient one
+		.Flags = D3D12_RESOURCE_FLAG_NONE // no flags
+	};;
+	int imageBytesPerRow = 128 * 4;
 	BYTE* imageData;
-	int imageSize;
+	//int imageSize;
 
+	imageData = reinterpret_cast<BYTE*>(loadAsset(pak2Begin, 0xC41E6E5D));
 
-	imageSize = LoadImageDataFromFile(&imageData, textureDesc, L"download.jpg", imageBytesPerRow);
+	//imageSize = LoadImageDataFromFile(&imageData, textureDesc, L"download.jpg", imageBytesPerRow);
 
 	// make sure we have data
-	if (imageSize <= 0)
-	{
-		Running = false;
-		return false;
-	}
+	//if (imageSize <= 0)
+	//{
+	//	Running = false;
+	//	return false;
+	//}
 
 
 	{
