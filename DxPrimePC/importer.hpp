@@ -10,8 +10,8 @@
 #include <fcntl.h>
 #include <io.h>
 #include <bitset>
+#include <concepts>
 #include <DirectXMath.h>
-
 struct fourCC
 {
 	char data[4];
@@ -25,7 +25,7 @@ struct unnamedAsset
 	int32_t offset;
 };
 
-inline float asFloat(uint32_t i) { return reinterpret_cast<float&>(i); }
+inline float asFloat(uint32_t i) noexcept{ return reinterpret_cast<float&>(i); }
 
 struct nativeObject
 {
@@ -52,10 +52,7 @@ struct unnamedAssetTableEntry
 unnamedAssetTableEntry* unnamedAssetTable;
 uint32_t unnamedAssetTable_entries = 0;
 
-
-
-
-static int Unpack565(uint8_t const* packed, uint8_t* colour)
+int Unpack565(uint8_t _In_ const* const &packed, uint8_t* _Out_ color) noexcept
 {
 	// build the packed value - GCN: indices reversed
 	int value = (int)packed[1] | ((int)packed[0] << 8);
@@ -66,30 +63,30 @@ static int Unpack565(uint8_t const* packed, uint8_t* colour)
 	uint8_t blue = (uint8_t)(value & 0x1f);
 
 	// scale up to 8 bits
-	colour[0] = (red << 3) | (red >> 2);
-	colour[1] = (green << 2) | (green >> 4);
-	colour[2] = (blue << 3) | (blue >> 2);
-	colour[3] = 255;
+	color[0] = (red << 3) | (red >> 2);
+	color[1] = (green << 2) | (green >> 4);
+	color[2] = (blue << 3) | (blue >> 2);
+	color[3] = 255;
 
 	// return the value
 	return value;
 }
 
-void DecompressColourGCN(uint32_t texWidth, uint8_t* rgba, void const* block)
+void DecompressColourGCN(const uint32_t _In_ &texWidth, uint8_t* _Out_writes_bytes_all_(texWidth * 32) rgba, const void *const _In_ block)
 {
 	// get the block bytes
-	uint8_t const* bytes = reinterpret_cast<uint8_t const*>(block);
+	const uint8_t *const bytes = reinterpret_cast<uint8_t const*>(block);
 
 	// unpack the endpoints
 	uint8_t codes[16];
-	int a = Unpack565(bytes, codes);
-	int b = Unpack565(bytes + 2, codes + 4);
+	const int a = Unpack565(bytes, codes);
+	const int b = Unpack565(bytes + 2, codes + 4);
 
 	// generate the midpoints
 	for (int i = 0; i < 3; ++i)
 	{
-		int c = codes[i];
-		int d = codes[4 + i];
+		const int c = codes[i];
+		const int d = codes[4 + i];
 
 		if (a <= b)
 		{
@@ -143,11 +140,11 @@ struct TXTR_header
 	uint16_t height;
 	uint32_t mipCount;
 };
-inline void parseTXTR(uint8_t* source, void** dest)
+inline void parseTXTR(uint8_t const*const &source, void** dest)
 {
-	//dest should be nullptr, need to fill it with a pointer to the native data
-	//tbd: set up custom allocator for this
-	TXTR_header* header = reinterpret_cast<TXTR_header*>(source);
+	__assume(*dest == nullptr);
+	
+	const TXTR_header* const header = reinterpret_cast<const TXTR_header *const>(source);
 	std::cout << std::hex << "format: ";
 	switch (_byteswap_ulong(header->format))
 	{
@@ -186,8 +183,8 @@ inline void parseTXTR(uint8_t* source, void** dest)
 		break;
 	}
 
-	const int imageWidth = _byteswap_ushort(header->width);
-	const int imageHeight = _byteswap_ushort(header->height);
+	const uint16_t imageWidth = _byteswap_ushort(header->width);
+	const uint16_t imageHeight = _byteswap_ushort(header->height);
 
 	std::cout << std::dec << "width: " << imageWidth << '\n';
 
@@ -195,40 +192,16 @@ inline void parseTXTR(uint8_t* source, void** dest)
 
 	std::cout << std::dec << "mips: " << _byteswap_ulong(header->mipCount) << '\n';
 
-	//std::cout << dest << '\n';
-	std::cout << std::hex << *reinterpret_cast<uint64_t*>(dest) << '\n';
-
-
-
-	int HBlocks = (imageWidth + 8 - 1) / 8;
-	int VBlocks = (imageHeight + 8 - 1) / 8;
-
-
-	int HBlocksm1 = (imageWidth / 2 + 8 - 1) / 8;
-	int VBlocksm1 = (imageHeight / 2 + 8 - 1) / 8;
-	int HBlocksm2 = (imageWidth / 4 + 8 - 1) / 8;
-	int VBlocksm2 = (imageHeight / 4 + 8 - 1) / 8;
-	int HBlocksm3 = (imageWidth / 8 + 8 - 1) / 8;
-	int VBlocksm3 = (imageHeight / 8 + 8 - 1) / 8;
-	int numblocks = HBlocks * VBlocks;
-
-	int blockSize = 32;
-
-	int imageSize = numblocks * blockSize;
-
 	uint32_t subGetLoc = sizeof(TXTR_header);
-	*dest = malloc(imageWidth * imageHeight * 4);
-	uint8_t* pixels = (uint8_t*)*dest;
-	for (int y = 0; y < imageHeight; y++)
-	{
-		for (int x = 0; x < imageWidth; x++)
-		{
-			pixels[(imageWidth * y + x) * 4 + 0] = (x + 1) % 16 < 2 || (y + 1) % 16 < 2 ? 0 : 255;
-			pixels[(imageWidth * y + x) * 4 + 1] = (x + 1) % 16 < 2 || (y + 1) % 16 < 2 ? 255 : 0;
-			pixels[(imageWidth * y + x) * 4 + 2] = 0;
-			pixels[(imageWidth * y + x) * 4 + 3] = 0xff;
-		}
-	}
+
+	//tbd: set up custom allocator for this
+	*dest = malloc(imageWidth * imageHeight * 4 + sizeof(imageWidth) + sizeof(imageHeight));
+
+	uint8_t* const pixels = ((uint8_t*)*dest) + sizeof(imageWidth) + sizeof(imageHeight);
+
+	*(reinterpret_cast<uint16_t*>(pixels)-2) = imageWidth;
+	*(reinterpret_cast<uint16_t*>(pixels)-1) = imageHeight;
+
 
 	for (int y = 0; y < imageHeight; y += 8)
 	{
@@ -259,8 +232,8 @@ struct STRGLanguage
 	fourCC langID;
 	uint32_t langStringsOffset;
 };
-using MPString = std::vector<std::wstring>;
-inline void parseSTRG(const uint8_t* const source)
+using MPString = typename std::vector<std::wstring>;
+inline void parseSTRG(const const uint8_t* const _In_ &source)
 {
 
 #if _DEBUG
@@ -410,22 +383,28 @@ inline constexpr uint32_t pad32(const uint32_t& input) noexcept
 template<typename pointer>
 inline void movePtr(pointer& ptr, const int32_t& amount) noexcept requires std::is_pointer_v<pointer>
 {
-	uint8_t* v = reinterpret_cast<uint8_t*>(ptr) + amount;
-	ptr = reinterpret_cast<pointer>(v);
+	const uint8_t* v = reinterpret_cast<const uint8_t*>(ptr) + amount;
+	ptr = reinterpret_cast<const pointer>(v);
 }
 
 template<typename pointer>
-inline pointer offsetPointer(pointer ptr, const uint32_t& amount) noexcept requires std::is_pointer_v<pointer>
+inline pointer offsetPointer(const pointer ptr, const uint32_t& amount) noexcept requires std::is_pointer_v<pointer> && !std::is_const_v<pointer>
 {
-	uint8_t* v = reinterpret_cast<uint8_t*>(ptr) + amount;
-	return reinterpret_cast<pointer>(v);
+	const uint8_t* v = reinterpret_cast<const uint8_t*>(ptr) + amount;
+	return reinterpret_cast<const pointer>(v);
 }
 
-
-std::vector<uint32_t> v_strings;
-inline void parseCMDL(uint8_t* source, void* dest)
+template<typename pointer>
+inline pointer offsetPointer(const pointer const ptr, const uint32_t& amount) noexcept requires std::is_pointer_v<pointer> && std::is_const_v<pointer>
 {
-	CMDL_header* header = reinterpret_cast<CMDL_header*>(source);
+	const uint8_t* v = reinterpret_cast<const uint8_t*>(ptr) + amount;
+	return reinterpret_cast<const pointer>(v);
+}
+    
+std::vector<uint32_t> v_strings;
+inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
+{
+	const CMDL_header* header = reinterpret_cast<const CMDL_header*>(source);
 	std::cout << std::hex << "magic: " << _byteswap_ulong(header->magic) << '\n';
 	std::cout << std::hex << "version: " << _byteswap_ulong(header->version) << '\n';
 	std::cout << std::hex << "flags: " << _byteswap_ulong(header->flag) << '\n';
@@ -445,13 +424,13 @@ inline void parseCMDL(uint8_t* source, void* dest)
 		dataSectionSizes.push_back(_byteswap_ulong(offsetPointer(header, i * sizeof(header->dataSectionSize))->dataSectionSize));
 	}
 
-	uint8_t* currentDataSection = source +
+	const uint8_t* currentDataSection = source +
 		pad32(sizeof(CMDL_header) +
-			sizeof(header->dataSectionSize) * (_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->dataSectionCount))
+			sizeof(header->dataSectionSize) * (_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->dataSectionCount))
 		);
 	std::vector<uint32_t> vertexAttributeFlags;
-	CMDL_materialSet* materialSet = reinterpret_cast<CMDL_materialSet*>(currentDataSection);
-	for (int materialSetIndex = 0; materialSetIndex < _byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount); materialSetIndex++)
+	const CMDL_materialSet* materialSet = reinterpret_cast<const CMDL_materialSet*>(currentDataSection);
+	for (int materialSetIndex = 0; materialSetIndex < _byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount); materialSetIndex++)
 	{
 		std::wcout << "reading material set " << materialSetIndex << '\n';
 		std::cout << "texture count: " << _byteswap_ulong(materialSet->textureIDs) << '\n';
@@ -476,8 +455,8 @@ inline void parseCMDL(uint8_t* source, void* dest)
 
 		movePtr(materialSet, sizeof(materialSet->materialEndOffsets) * _byteswap_ulong(materialSet->materialEndOffsets));
 
-		CMDL_material* const material1 = reinterpret_cast<CMDL_material*>(materialSet + 1);//move to whatever is after the material set, the dynamic sizes have already been accounted for
-		CMDL_material* currentMaterial = material1;
+		const CMDL_material* const material1 = reinterpret_cast<const CMDL_material*>(materialSet + 1);//move to whatever is after the material set, the dynamic sizes have already been accounted for
+		const CMDL_material* currentMaterial = material1;
 		for (int materialIndex = 0; materialIndex < materialEndOffsets.size(); materialIndex++)
 		{
 
@@ -528,7 +507,7 @@ inline void parseCMDL(uint8_t* source, void* dest)
 
 			for (int i = 0; i < _byteswap_ulong(currentMaterial->colorChannelFlags); i++)
 			{
-				const decltype(currentMaterial->colorChannelFlags) colorChannelFlags = _byteswap_ulong(offsetPointer(currentMaterial, sizeof(currentMaterial->colorChannelFlags) + i * sizeof(currentMaterial->colorChannelFlags))->colorChannelFlags);
+				decltype(currentMaterial->colorChannelFlags) colorChannelFlags = _byteswap_ulong(offsetPointer(currentMaterial, sizeof(currentMaterial->colorChannelFlags) + i * sizeof(currentMaterial->colorChannelFlags))->colorChannelFlags);
 				std::cout << std::hex << "color channel flags: " << colorChannelFlags << '\n';
 				std::cout << std::hex << "Enable lighting (enable): " << ((colorChannelFlags & 0x1) ? 1 : 0) << '\n';
 				std::cout << std::hex << "Ambient color source (ambsrc): " << ((colorChannelFlags & 0x2) ? 1 : 0) << '\n';
@@ -540,7 +519,7 @@ inline void parseCMDL(uint8_t* source, void* dest)
 
 			std::cout << "TEV stage count: " << _byteswap_ulong(currentMaterial->TEVStageCount) << '\n';
 
-			CMDL_TEVStage* TEVStage = reinterpret_cast<CMDL_TEVStage*>(currentMaterial + 1);
+			const CMDL_TEVStage* const TEVStage = reinterpret_cast<const CMDL_TEVStage*>(currentMaterial + 1);
 
 			for (int i = 0; i < _byteswap_ulong(currentMaterial->TEVStageCount); i++)
 			{
@@ -563,19 +542,19 @@ inline void parseCMDL(uint8_t* source, void* dest)
 			movePtr(currentMaterial, materialEndOffsets[materialIndex]);
 		}
 		movePtr(currentDataSection, dataSectionSizes[materialSetIndex]);
-		materialSet = reinterpret_cast<CMDL_materialSet*>(currentDataSection);
+		materialSet = reinterpret_cast<const CMDL_materialSet*>(currentDataSection);
 	}
 
-	uint8_t* vertexCoords = currentDataSection;
-	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 0]);
-	uint8_t* normals = currentDataSection;
-	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 1]);
-	uint8_t* vertexColors = currentDataSection;
-	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 2]);
-	uint8_t* floatUVCoords = currentDataSection;
-	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 3]);
-	uint8_t* shortUVCoords = currentDataSection;
-	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 4]);
+	const uint8_t* vertexCoords = currentDataSection;
+	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 0]);
+	const uint8_t* normals = currentDataSection;
+	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 1]);
+	const uint8_t* vertexColors = currentDataSection;
+	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 2]);
+	const uint8_t* floatUVCoords = currentDataSection;
+	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 3]);
+	const uint8_t* shortUVCoords = currentDataSection;
+	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 4]);
 
 	std::cout << "coordinate count: " << std::dec << (normals - vertexCoords) / (sizeof(float) * 3) << '\n';
 	std::cout << "coordinates location: " << std::hex << (vertexCoords - source) << '\n';
@@ -588,16 +567,16 @@ inline void parseCMDL(uint8_t* source, void* dest)
 	for (uint32_t i = 0; i < (normals - vertexCoords) / (sizeof(float) * 3); i++)
 	{
 		MyFile << "v " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<uint32_t*>(vertexCoords + (i * 3 + 0) * sizeof(float)))) << " " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<uint32_t*>(vertexCoords + (i * 3 + 1) * sizeof(float)))) << " " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<uint32_t*>(vertexCoords + (i * 3 + 2) * sizeof(float)))) << "\n";
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 0) * sizeof(float)))) << " " <<
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 1) * sizeof(float)))) << " " <<
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 2) * sizeof(float)))) << "\n";
 	}
 
 	for (uint32_t i = 0; i < (shortUVCoords - floatUVCoords) / (sizeof(float) * 2); i++)
 	{
 		MyFile << "vt " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<uint32_t*>(floatUVCoords + (i * 2 + 0) * sizeof(float)))) << " " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<uint32_t*>(floatUVCoords + (i * 2 + 1) * sizeof(float)))) << "\n";
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(floatUVCoords + (i * 2 + 0) * sizeof(float)))) << " " <<
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(floatUVCoords + (i * 2 + 1) * sizeof(float)))) << "\n";
 	}
 
 
@@ -611,7 +590,7 @@ inline void parseCMDL(uint8_t* source, void* dest)
 	*/
 
 
-	CMDL_SurfaceOffsetsHeader* const surfaceOffsets = reinterpret_cast<CMDL_SurfaceOffsetsHeader*>(currentDataSection);
+	const CMDL_SurfaceOffsetsHeader* const surfaceOffsets = reinterpret_cast<const CMDL_SurfaceOffsetsHeader*const>(currentDataSection);
 	std::cout << "surface count: " << std::dec << _byteswap_ulong(surfaceOffsets->surfaceCount) << '\n';
 
 	std::vector<uint32_t> surfaceEndOffsets;
@@ -621,12 +600,12 @@ inline void parseCMDL(uint8_t* source, void* dest)
 		surfaceEndOffsets.push_back(_byteswap_ulong(offsetPointer(surfaceOffsets, i * sizeof(surfaceOffsets->surfaceEndOffset))->surfaceEndOffset));
 	}
 
-	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 5]);
+	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 5]);
 
 
 	for (int surfaceNum = 0; surfaceNum < _byteswap_ulong(surfaceOffsets->surfaceCount); surfaceNum++)
 	{
-		CMDL_SurfaceHeader* firstSurface = reinterpret_cast<CMDL_SurfaceHeader*>(currentDataSection);
+		const CMDL_SurfaceHeader* firstSurface = reinterpret_cast<const CMDL_SurfaceHeader*>(currentDataSection);
 		std::cout << std::dec << "center point: ("
 			<< asFloat(_byteswap_ulong(firstSurface->centerPoint[0])) << ", "
 			<< asFloat(_byteswap_ulong(firstSurface->centerPoint[1])) << ", "
@@ -643,8 +622,8 @@ inline void parseCMDL(uint8_t* source, void* dest)
 			<< asFloat(_byteswap_ulong(firstSurface->surfaceNormal[2])) << ")\n";
 
 		const uint32_t primitiveMaterialIndex = _byteswap_ulong(firstSurface->materialIndex);
-		uint8_t* GXPrimitive = currentDataSection + pad32(sizeof(CMDL_SurfaceHeader) + _byteswap_ulong(firstSurface->extraDataSize));
-		movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<CMDL_header*>(source)->materialSetCount) + 6 + surfaceNum]);
+		const uint8_t* GXPrimitive = currentDataSection + pad32(sizeof(CMDL_SurfaceHeader) + _byteswap_ulong(firstSurface->extraDataSize));
+		movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 6 + surfaceNum]);
 
 		for (int primitive = 0; true; primitive++)
 		{
@@ -692,8 +671,8 @@ inline void parseCMDL(uint8_t* source, void* dest)
 				std::cout << "format not found\n";
 			}
 			GXPrimitive++;
-			std::cout << "vertex count: " << std::dec << _byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)) << '\n';
-			const uint32_t vertexCount = _byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive));
+			std::cout << "vertex count: " << std::dec << _byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)) << '\n';
+			const uint32_t vertexCount = _byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive));
 			GXPrimitive += 2;
 			//todo: make dynamic
 			//std::vector<uint16_t> vertex_indices;
@@ -703,57 +682,57 @@ inline void parseCMDL(uint8_t* source, void* dest)
 			{
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0x3) // Position
 				{
-					obj.vertex_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.vertex_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0xC) // Normal
 				{
-					obj.normal_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.normal_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0x30) // Color 0
 				{
-					obj.color0_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.color0_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0xC0) // Color 1
 				{
-					obj.color1_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.color1_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0x300) // Texture 0
 				{
-					obj.tex0_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex0_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0xC00) // Texture 1
 				{
-					obj.tex1_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex1_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0x3000) // Texture 2
 				{
-					obj.tex2_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex2_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0xC000) // Texture 3
 				{
-					obj.tex3_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex3_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0x30000) // Texture 4
 				{
-					obj.tex4_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex4_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0xC0000) // Texture 5
 				{
-					obj.tex5_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex5_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 				if (vertexAttributeFlags[primitiveMaterialIndex] & 0x300000) // Texture 6
 				{
-					obj.tex6_indices.push_back(_byteswap_ushort(*reinterpret_cast<uint16_t*>(GXPrimitive)));
+					obj.tex6_indices.push_back(_byteswap_ushort(*reinterpret_cast<const uint16_t*>(GXPrimitive)));
 					GXPrimitive += 2;
 				}
 			}
@@ -1126,6 +1105,10 @@ found:
 	* strg: 0x1A626AAC
 	* STRG strg = *loadSTRG(0x1A626AAC, "Metroid2.pak");
 	*
+	* textures:
+	* big, neon: 0xD82A3380
+	* neon trees: 0x94AD11C1
+	* 
 	* cinf: 0x81E65611
 	* anim: 0x8B3569CE
 	*

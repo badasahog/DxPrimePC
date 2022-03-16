@@ -17,6 +17,7 @@
 #include <cmath>
 #include <wincodec.h>
 #include <zlib.h>
+#include <source_location>
 #include "importer.hpp"
 #pragma endregion("imports")
 #pragma region("linker directives")
@@ -100,7 +101,7 @@
 
 #define THROW_ON_FAIL(x) \
 	if (FAILED(x)){ \
-		std::cout << std::dec << "[" << __LINE__ <<"]ERROR: " << std::hex << x << std::dec << std::endl; \
+		std::cout << std::dec << "[" << std::source_location::current().line() <<"]ERROR: " << std::hex << x << std::dec << std::endl; \
 		throw std::exception(); \
 	}
 
@@ -1244,33 +1245,23 @@ int main()
 
 	// Load the image from file
 
+
+	BYTE* imageData = reinterpret_cast<BYTE*>(loadAsset(pak2Begin, 0x94AD11C1));
+	uint16_t* width = reinterpret_cast<uint16_t*>(imageData);
 	D3D12_RESOURCE_DESC textureDesc = {
 		.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
 		.Alignment = 0, // may be 0, 4KB, 64KB, or 4MB. 0 will let runtime decide between 64KB and 4MB (4MB for multi-sampled textures)
-		.Width = 128, // width of the texture
-		.Height = 64, // height of the texture
+		.Width = *width, // width of the texture
+		.Height = *(width+1), // height of the texture
 		.DepthOrArraySize = 1, // if 3d image, depth of 3d image. Otherwise an array of 1D or 2D textures (we only have one image, so we set 1)
 		.MipLevels = 1, // Number of mipmaps. We are not generating mipmaps for this texture, so we have only one level
 		.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // This is the dxgi format of the image (format of the pixels)
 		.SampleDesc = {.Count = 1, .Quality = 0},
 		.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN, // The arrangement of the pixels. Setting to unknown lets the driver choose the most efficient one
 		.Flags = D3D12_RESOURCE_FLAG_NONE // no flags
-	};;
-	int imageBytesPerRow = 128 * 4;
-	BYTE* imageData;
-	//int imageSize;
+	};
 
-	imageData = reinterpret_cast<BYTE*>(loadAsset(pak2Begin, 0xC41E6E5D));
-
-	//imageSize = LoadImageDataFromFile(&imageData, textureDesc, L"download.jpg", imageBytesPerRow);
-
-	// make sure we have data
-	//if (imageSize <= 0)
-	//{
-	//	Running = false;
-	//	return false;
-	//}
-
+	int imageBytesPerRow = *width * 4;
 
 	{
 		constexpr D3D12_HEAP_PROPERTIES heapProperties =
@@ -1296,7 +1287,7 @@ int main()
 	// this function gets the size an upload buffer needs to be to upload a texture to the gpu.
 	// each row must be 256 byte aligned except for the last row, which can just be the size in bytes of the row
 	// eg. textureUploadBufferSize = ((((width * numBytesPerPixel) + 255) & ~255) * (height - 1)) + (width * numBytesPerPixel);
-	//textureUploadBufferSize = (((imageBytesPerRow + 255) & ~255) * (textureDesc.Height - 1)) + imageBytesPerRow;
+
 	device->GetCopyableFootprints(&textureDesc, 0, 1, 0, nullptr, nullptr, nullptr, &textureUploadBufferSize);
 	{
 		constexpr D3D12_HEAP_PROPERTIES heapProperties =
@@ -1403,6 +1394,7 @@ int main()
 					}
 				}
 			}
+
 			pIntermediate->Unmap(0, nullptr);
 
 			if (DestinationDesc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
@@ -1783,7 +1775,6 @@ int main()
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-
 {
 	switch (msg)
 	{
