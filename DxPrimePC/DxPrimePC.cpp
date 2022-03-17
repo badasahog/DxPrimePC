@@ -16,7 +16,6 @@
 #include <complex>
 #include <cmath>
 #include <wincodec.h>
-#include <zlib.h>
 #include <source_location>
 #include "importer.hpp"
 #pragma endregion("imports")
@@ -101,7 +100,7 @@
 
 #define THROW_ON_FAIL(x) \
 	if (FAILED(x)){ \
-		std::cout << std::dec << "[" << std::source_location::current().line() <<"]ERROR: " << std::hex << x << std::dec << std::endl; \
+		std::cout << std::dec << "[" << std::source_location::current().line() <<"]ERROR: " << std::hex << x << std::dec << '\n'; \
 		throw std::exception(); \
 	}
 
@@ -232,9 +231,33 @@ ComPtr<ID3D12Resource> textureBufferUploadHeap;
 
 struct Vertex {
 	DirectX::XMFLOAT3 pos;
-	DirectX::XMFLOAT2 texCoord;
-	Vertex(const float& x, const float& y, const float& z, const float& u, const float& v) noexcept
-		: pos(x, y, z), texCoord(u, v)
+	DirectX::XMFLOAT3 normal;
+	DirectX::XMFLOAT2 tex0Coord;
+	DirectX::XMFLOAT2 tex1Coord;
+	Vertex() = default;
+	constexpr Vertex(
+		const float& xpos, const float& ypos, const float& zpos, 
+		const float& xnormal, const float& ynormal, const float& znormal, 
+		const float& tex0u, const float& tex0v,
+		const float& tex1u, const float& tex1v
+	) noexcept :
+		pos(xpos, ypos, zpos),
+		normal(xnormal, ynormal, znormal),
+		tex0Coord(tex0u, tex0v),
+		tex1Coord(tex1u, tex1v)
+
+	{
+	}
+	constexpr Vertex(
+		const DirectX::XMFLOAT3 par_pos,
+		const DirectX::XMFLOAT3 par_normal,
+		const DirectX::XMFLOAT2 par_tex0,
+		const DirectX::XMFLOAT2 par_tex1
+	) noexcept :
+		pos(par_pos),
+		normal(par_normal),
+		tex0Coord(par_tex0),
+		tex1Coord(par_tex1)
 	{
 	}
 };
@@ -263,7 +286,16 @@ void WaitForPreviousFrame() noexcept
 
 int main()
 {
-
+	
+#if defined(_DEBUG)
+		// Always enable the debug layer before doing anything DX12 related
+		// so all possible errors generated while creating DX12 objects
+		// are caught by the debug layer.
+		ComPtr<ID3D12Debug> debugInterface;
+		THROW_ON_FAIL(D3D12GetDebugInterface(IID_PPV_ARGS(&debugInterface)));
+		debugInterface->EnableDebugLayer();
+#endif
+	
 	const uint8_t* pak2Begin = indexPak(L"Metroid2.pak");
 
 	//loadAsset(pak2Begin, 0x729EA8BA);
@@ -338,7 +370,7 @@ int main()
 	// -- Create the Device -- //
 
 	ComPtr<IDXGIFactory6> dxgiFactory;
-	THROW_ON_FAIL(CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory)));
+	THROW_ON_FAIL(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&dxgiFactory)));
 
 	ComPtr<IDXGIAdapter1> adapter; // adapters are the graphics card (this includes the embedded graphics on the motherboard or cpu)
 
@@ -352,6 +384,44 @@ int main()
 		D3D_FEATURE_LEVEL_12_1,
 		IID_PPV_ARGS(&device)
 	));
+	
+#if defined(_DEBUG)
+	ComPtr<ID3D12InfoQueue> pInfoQueue;
+	if (SUCCEEDED(device.As(&pInfoQueue)))
+	{
+		pInfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+		pInfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+		pInfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
+
+		// Suppress whole categories of messages
+		//D3D12_MESSAGE_CATEGORY Categories[] = {};
+
+		// Suppress messages based on their severity level
+		D3D12_MESSAGE_SEVERITY Severities[] =
+		{
+			D3D12_MESSAGE_SEVERITY_INFO
+		};
+
+		// Suppress individual messages by their ID
+		D3D12_MESSAGE_ID DenyIds[] = {
+			D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,   // I'm really not sure how to avoid this message.
+			D3D12_MESSAGE_ID_MAP_INVALID_NULLRANGE,                         // This warning occurs when using capture frame while graphics debugging.
+			D3D12_MESSAGE_ID_UNMAP_INVALID_NULLRANGE,                       // This warning occurs when using capture frame while graphics debugging.
+		};
+
+		D3D12_INFO_QUEUE_FILTER NewFilter = {};
+		//NewFilter.DenyList.NumCategories = _countof(Categories);
+		//NewFilter.DenyList.pCategoryList = Categories;
+		NewFilter.DenyList.NumSeverities = _countof(Severities);
+		NewFilter.DenyList.pSeverityList = Severities;
+		NewFilter.DenyList.NumIDs = _countof(DenyIds);
+		NewFilter.DenyList.pIDList = DenyIds;
+
+		THROW_ON_FAIL(pInfoQueue->PushStorageFilter(&NewFilter));
+	}
+#endif
+
+
 
 	// -- Create a direct command queue -- //
 
@@ -456,7 +526,7 @@ int main()
 	if (fenceEvent == nullptr)
 	{
 		Running = false;
-		std::cout << "failed to create fence event" << std::endl;
+		std::cout << "failed to create fence event\n";
 		return false;
 	}
 
@@ -579,11 +649,22 @@ int main()
 
 	// The input layout is used by the Input Assembler so that it knows
 	// how to read the vertex data bound to it.
-
+	/*
+	* 
+    LPCSTR SemanticName;
+    UINT SemanticIndex;
+    DXGI_FORMAT Format;
+    UINT InputSlot;
+    UINT AlignedByteOffset;
+    D3D12_INPUT_CLASSIFICATION InputSlotClass;
+    UINT InstanceDataStepRate;
+	*/
 	constexpr D3D12_INPUT_ELEMENT_DESC inputLayout[] =
 	{
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+		{ "POSITION",	0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL",		0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD0_",	0, DXGI_FORMAT_R32G32_FLOAT,	0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD1_",	0, DXGI_FORMAT_R32G32_FLOAT,	0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
 	};
 
 	// fill out an input layout description structure
@@ -659,6 +740,7 @@ int main()
 		.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, // type of topology we are drawing
 		.NumRenderTargets = 1, // we are only binding one render target
 		.RTVFormats = {DXGI_FORMAT_R8G8B8A8_UNORM}, // format of the render target
+		.DSVFormat = {DXGI_FORMAT_D32_FLOAT}, // format of the render target
 		.SampleDesc = {.Count = 1, .Quality = 0} // must be the same sample description as the swapchain and depth/stencil buffer
 	};
 	// create the pso
@@ -667,46 +749,62 @@ int main()
 
 	// Create vertex buffer
 
+	CMDL_native* cmdl = reinterpret_cast<CMDL_native*>(loadAsset(pak2Begin, 0x729EA8BA));
+	std::cout << cmdl << '\n';
 	// a cube
-	Vertex vList[] = {
+	std::vector<Vertex> vList;
+
+	//vList.resize(cmdl->native_positions.size());
+	for (int i = 0; i < cmdl->native_positions.size(); i++)
+	{
+		vList.push_back(
+			Vertex(
+				cmdl->native_positions[i],
+				cmdl->native_normals[i],
+				cmdl->native_tex0[i],
+				cmdl->native_tex1[i]
+			)
+		);
+		
+	}
+
 		// front face
-		{ -0.5f,  0.5f, -0.5f, 0.0f, 0.0f },
-		{  0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
-		{ -0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
-		{  0.5f,  0.5f, -0.5f, 1.0f, 0.0f },
+	//	{ -0.5f,  0.5f, -0.5f, 0.0f, 0.0f },
+	//	{  0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
+	//	{ -0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
+	//	{  0.5f,  0.5f, -0.5f, 1.0f, 0.0f },
+	//
+	//	// right side face
+	//	{  0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
+	//	{  0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
+	//	{  0.5f, -0.5f,  0.5f, 1.0f, 1.0f },
+	//	{  0.5f,  0.5f, -0.5f, 0.0f, 0.0f },
+	//
+	//	// left side face
+	//	{ -0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
+	//	{ -0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
+	//	{ -0.5f, -0.5f,  0.5f, 0.0f, 1.0f },
+	//	{ -0.5f,  0.5f, -0.5f, 1.0f, 0.0f },
+	//
+	//	// back face
+	//	{  0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
+	//	{ -0.5f, -0.5f,  0.5f, 1.0f, 1.0f },
+	//	{  0.5f, -0.5f,  0.5f, 0.0f, 1.0f },
+	//	{ -0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
+	//
+	//	// top face
+	//	{ -0.5f,  0.5f, -0.5f, 0.0f, 1.0f },
+	//	{  0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
+	//	{  0.5f,  0.5f, -0.5f, 1.0f, 1.0f },
+	//	{ -0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
+	//
+	//	// bottom face
+	//	{  0.5f, -0.5f,  0.5f, 0.0f, 0.0f },
+	//	{ -0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
+	//	{  0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
+	//	{ -0.5f, -0.5f,  0.5f, 1.0f, 0.0f },
 
-		// right side face
-		{  0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
-		{  0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
-		{  0.5f, -0.5f,  0.5f, 1.0f, 1.0f },
-		{  0.5f,  0.5f, -0.5f, 0.0f, 0.0f },
-
-		// left side face
-		{ -0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
-		{ -0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
-		{ -0.5f, -0.5f,  0.5f, 0.0f, 1.0f },
-		{ -0.5f,  0.5f, -0.5f, 1.0f, 0.0f },
-
-		// back face
-		{  0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
-		{ -0.5f, -0.5f,  0.5f, 1.0f, 1.0f },
-		{  0.5f, -0.5f,  0.5f, 0.0f, 1.0f },
-		{ -0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
-
-		// top face
-		{ -0.5f,  0.5f, -0.5f, 0.0f, 1.0f },
-		{  0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
-		{  0.5f,  0.5f, -0.5f, 1.0f, 1.0f },
-		{ -0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
-
-		// bottom face
-		{  0.5f, -0.5f,  0.5f, 0.0f, 0.0f },
-		{ -0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
-		{  0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
-		{ -0.5f, -0.5f,  0.5f, 1.0f, 0.0f },
-	};
-
-	constexpr int vBufferSize = sizeof(vList);
+	const int vBufferSize = vList.size() * sizeof(Vertex);
 
 	// create default heap
 	// default heap is memory on the GPU. Only the GPU has access to this memory
@@ -720,7 +818,7 @@ int main()
 			.CreationNodeMask = 1,
 			.VisibleNodeMask = 1
 		};
-		constexpr D3D12_RESOURCE_DESC resourceDescription{
+		const D3D12_RESOURCE_DESC resourceDescription{
 			.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 			.Alignment = 0,
 			.Width = (UINT64)vBufferSize,
@@ -758,11 +856,11 @@ int main()
 			.CreationNodeMask = 1,
 			.VisibleNodeMask = 1
 		};
-		constexpr D3D12_RESOURCE_DESC ResourceDescription =
+		const D3D12_RESOURCE_DESC ResourceDescription =
 		{
 			.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 			.Alignment = 0,
-			.Width = vBufferSize,
+			.Width = (UINT64)vBufferSize,
 			.Height = 1,
 			.DepthOrArraySize = 1,
 			.MipLevels = 1,
@@ -786,7 +884,7 @@ int main()
 
 	// store vertex buffer in upload heap
 	const D3D12_SUBRESOURCE_DATA vertexData = {
-		.pData = reinterpret_cast<BYTE*>(vList), // pointer to our vertex array
+		.pData = reinterpret_cast<BYTE*>(vList.data()), // pointer to our vertex array
 		.RowPitch = vBufferSize, // size of all our triangle vertex data
 		.SlicePitch = vBufferSize // also the size of our triangle vertex data
 	};
@@ -888,35 +986,37 @@ int main()
 	// Create index buffer
 
 	// a quad (2 triangles)
-	DWORD iList[] = {
-		// front face
-		0, 1, 2, // first triangle
-		0, 3, 1, // second triangle
+	std::vector<DWORD> iList;
+	for (int i = 0; i < 1480; i++)
+		iList.push_back(i);
+	//	// front face
+	//	0, 1, 2, // first triangle
+	//	0, 3, 1, // second triangle
+	//
+	//	// left face
+	//	4, 5, 6, // first triangle
+	//	4, 7, 5, // second triangle
+	//
+	//	// right face
+	//	8, 9, 10, // first triangle
+	//	8, 11, 9, // second triangle
+	//
+	//	// back face
+	//	12, 13, 14, // first triangle
+	//	12, 15, 13, // second triangle
+	//
+	//	// top face
+	//	16, 17, 18, // first triangle
+	//	16, 19, 17, // second triangle
+	//
+	//	// bottom face
+	//	20, 21, 22, // first triangle
+	//	20, 23, 21, // second triangle
+	//};
 
-		// left face
-		4, 5, 6, // first triangle
-		4, 7, 5, // second triangle
+	const int iBufferSize = iList.size() * sizeof(DWORD);
 
-		// right face
-		8, 9, 10, // first triangle
-		8, 11, 9, // second triangle
-
-		// back face
-		12, 13, 14, // first triangle
-		12, 15, 13, // second triangle
-
-		// top face
-		16, 17, 18, // first triangle
-		16, 19, 17, // second triangle
-
-		// bottom face
-		20, 21, 22, // first triangle
-		20, 23, 21, // second triangle
-	};
-
-	constexpr int iBufferSize = sizeof(iList);
-
-	numCubeIndices = sizeof(iList) / sizeof(DWORD);
+	numCubeIndices = iList.size();
 	{
 		constexpr D3D12_HEAP_PROPERTIES heapProperties =
 		{
@@ -926,11 +1026,11 @@ int main()
 			.CreationNodeMask = 1,
 			.VisibleNodeMask = 1
 		};
-		constexpr D3D12_RESOURCE_DESC resourceDescription =
+		const D3D12_RESOURCE_DESC resourceDescription =
 		{
 			.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 			.Alignment = 0,
-			.Width = iBufferSize,
+			.Width = (UINT64)iBufferSize,
 			.Height = 1,
 			.DepthOrArraySize = 1,
 			.MipLevels = 1,
@@ -964,10 +1064,10 @@ int main()
 			.CreationNodeMask = 1,
 			.VisibleNodeMask = 1
 		};
-		constexpr D3D12_RESOURCE_DESC resourceDescription{
+		const D3D12_RESOURCE_DESC resourceDescription{
 			.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 			.Alignment = 0,
-			.Width = vBufferSize,
+			.Width = (UINT64)vBufferSize,
 			.Height = 1,
 			.DepthOrArraySize = 1,
 			.MipLevels = 1,
@@ -992,7 +1092,7 @@ int main()
 	// store vertex buffer in upload heap
 	const D3D12_SUBRESOURCE_DATA indexData =
 	{
-		.pData = reinterpret_cast<BYTE*>(iList), // pointer to our index array
+		.pData = reinterpret_cast<BYTE*>(iList.data()), // pointer to our index array
 		.RowPitch = iBufferSize, // size of all our index buffer
 		.SlicePitch = iBufferSize // also the size of our index buffer
 	};
@@ -1014,10 +1114,6 @@ int main()
 			return 0;
 		}
 		void* pMem = malloc(static_cast<SIZE_T>(MemToAlloc));
-		if (pMem == nullptr)
-		{
-			return 0;
-		}
 		D3D12_PLACED_SUBRESOURCE_FOOTPRINT* pLayouts = static_cast<D3D12_PLACED_SUBRESOURCE_FOOTPRINT*>(pMem);
 		UINT64* pRowSizesInBytes = reinterpret_cast<UINT64*>(pLayouts + NumSubresources);
 		UINT* pNumRows = reinterpret_cast<UINT*>(pRowSizesInBytes + NumSubresources);
@@ -1041,7 +1137,7 @@ int main()
 			BYTE* pData;
 			THROW_ON_FAIL(pIntermediate->Map(0, nullptr, reinterpret_cast<void**>(&pData)));
 
-			for (UINT i = 0; i < NumSubresources; ++i)
+			for (UINT i = 0; i < NumSubresources; i++)
 			{
 				if (pRowSizesInBytes[i] > SIZE_T(-1)) return 0;
 				D3D12_MEMCPY_DEST DestData = { pData + pLayouts[i].Offset, pLayouts[i].Footprint.RowPitch, SIZE_T(pLayouts[i].Footprint.RowPitch) * SIZE_T(pNumRows[i]) };
@@ -1139,8 +1235,8 @@ int main()
 		{
 			.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
 			.Alignment = 0,
-			.Width = (UINT64)Width,
-			.Height = (UINT)Height,
+			.Width = static_cast<UINT64>(Width),
+			.Height = static_cast<UINT>(Height),
 			.DepthOrArraySize = 1,
 			.MipLevels = 0,
 			.Format = DXGI_FORMAT_D32_FLOAT,
@@ -1246,7 +1342,7 @@ int main()
 	// Load the image from file
 
 
-	BYTE* imageData = reinterpret_cast<BYTE*>(loadAsset(pak2Begin, 0x94AD11C1));
+	BYTE* imageData = reinterpret_cast<BYTE*>(loadAsset(pak2Begin, 0xD82A3380));
 	uint16_t* width = reinterpret_cast<uint16_t*>(imageData);
 	D3D12_RESOURCE_DESC textureDesc = {
 		.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
@@ -1780,7 +1876,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	{
 	case WM_KEYDOWN:
 		if (wParam == VK_ESCAPE) {
-			if (MessageBox(0, L"Are you sure you want to exit?",
+			if (MessageBoxW(0, L"Are you sure you want to exit?",
 				L"Really?", MB_YESNO | MB_ICONQUESTION) == IDYES)
 			{
 				Running = false;
@@ -1794,7 +1890,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		PostQuitMessage(0);
 		return 0;
 	}
-	return DefWindowProc(hwnd,
+	return DefWindowProcW(hwnd,
 		msg,
 		wParam,
 		lParam);
@@ -1894,7 +1990,7 @@ int GetDXGIFormatBitsPerPixel(DXGI_FORMAT& dxgiFormat)
 }
 
 // load and decode image from file
-int LoadImageDataFromFile(BYTE** imageData, D3D12_RESOURCE_DESC& resourceDescription, const LPCWSTR&& filename, int& bytesPerRow)
+int LoadImageDataFromFile(BYTE**const imageData, D3D12_RESOURCE_DESC& resourceDescription, const LPCWSTR&& filename, int& bytesPerRow)
 {
 
 	// we only need one instance of the imaging factory to create decoders and frames
@@ -2005,8 +2101,8 @@ int LoadImageDataFromFile(BYTE** imageData, D3D12_RESOURCE_DESC& resourceDescrip
 		.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN, // The arrangement of the pixels. Setting to unknown lets the driver choose the most efficient one
 		.Flags = D3D12_RESOURCE_FLAG_NONE // no flags
 	};
-	std::cout << "width_: " << std::dec << textureWidth << std::endl;
-	std::cout << "height: " << std::dec << textureHeight << std::endl;
+	std::cout << "width_: " << std::dec << textureWidth << '\n';
+	std::cout << "height: " << std::dec << textureHeight << '\n';
 	// return the size of the image. remember to delete the image once your done with it (in this tutorial once its uploaded to the gpu)
 	return imageSize;
 }

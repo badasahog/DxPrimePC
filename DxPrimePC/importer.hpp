@@ -1,4 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <iostream>
 #include <malloc.h>
@@ -72,7 +73,7 @@ int Unpack565(uint8_t _In_ const* const &packed, uint8_t* _Out_ color) noexcept
 	return value;
 }
 
-void DecompressColourGCN(const uint32_t _In_ &texWidth, uint8_t* _Out_writes_bytes_all_(texWidth * 32) rgba, const void *const _In_ block)
+void DecompressColorGCN(const uint32_t _In_ &texWidth, uint8_t* _Out_writes_bytes_all_(texWidth * 32) rgba, const void *const _In_ block)
 {
 	// get the block bytes
 	const uint8_t *const bytes = reinterpret_cast<uint8_t const*>(block);
@@ -140,7 +141,7 @@ struct TXTR_header
 	uint16_t height;
 	uint32_t mipCount;
 };
-inline void parseTXTR(uint8_t const*const &source, void** dest)
+inline void parseTXTR(const uint8_t *const &source, void** dest)
 {
 	__assume(*dest == nullptr);
 	
@@ -208,13 +209,13 @@ inline void parseTXTR(uint8_t const*const &source, void** dest)
 		for (int x = 0; x < imageWidth; x += 8)
 		{
 			//decode full dxt1 block, (4 sub blocks)
-			DecompressColourGCN(imageWidth, &pixels[4 * (y * imageWidth + x)], &source[subGetLoc]);
+			DecompressColorGCN(imageWidth, &pixels[4 * (y * imageWidth + x)], &source[subGetLoc]);
 			subGetLoc += 8;
-			DecompressColourGCN(imageWidth, &pixels[4 * ((y)*imageWidth + (x + 4))], &source[subGetLoc]);
+			DecompressColorGCN(imageWidth, &pixels[4 * ((y)*imageWidth + (x + 4))], &source[subGetLoc]);
 			subGetLoc += 8;
-			DecompressColourGCN(imageWidth, &pixels[4 * ((y + 4) * imageWidth + (x))], &source[subGetLoc]);
+			DecompressColorGCN(imageWidth, &pixels[4 * ((y + 4) * imageWidth + (x))], &source[subGetLoc]);
 			subGetLoc += 8;
-			DecompressColourGCN(imageWidth, &pixels[4 * ((y + 4) * imageWidth + (x + 4))], &source[subGetLoc]);
+			DecompressColorGCN(imageWidth, &pixels[4 * ((y + 4) * imageWidth + (x + 4))], &source[subGetLoc]);
 			subGetLoc += 8;
 		}
 	}
@@ -288,6 +289,7 @@ inline void parseSTRG(const const uint8_t* const _In_ &source)
 		return;
 	}
 }
+
 struct CMDL_header
 {
 	uint32_t magic;
@@ -360,7 +362,6 @@ struct native_vertex
 {
 	uint32_t vertexAttributeFlags;
 	float pos[3];
-
 };
 
 struct native_index_set
@@ -370,12 +371,15 @@ struct native_index_set
 
 struct CMDL_native
 {
-	void* vertexBuffer;
-	std::vector<uint32_t> indexBuffer;
+	std::vector<DirectX::XMFLOAT3> native_positions;
+	std::vector<DirectX::XMFLOAT3> native_normals;
+	std::vector<DirectX::XMFLOAT2> native_tex0;
+	std::vector<DirectX::XMFLOAT2> native_tex1;
+	std::vector<uint16_t> native_indices;
 };
 
 [[nodiscard]]
-inline constexpr uint32_t pad32(const uint32_t& input) noexcept
+inline constexpr uint32_t pad32(const uint32_t& _In_ input) noexcept
 {
 	return input - input % 32 + 32;
 }
@@ -388,21 +392,23 @@ inline void movePtr(pointer& ptr, const int32_t& amount) noexcept requires std::
 }
 
 template<typename pointer>
-inline pointer offsetPointer(const pointer ptr, const uint32_t& amount) noexcept requires std::is_pointer_v<pointer> && !std::is_const_v<pointer>
+[[nodiscard]]
+inline pointer offsetPointer(const pointer ptr, const uint32_t& amount) noexcept requires (std::is_pointer_v<pointer> && !std::is_const_v<pointer>)
 {
 	const uint8_t* v = reinterpret_cast<const uint8_t*>(ptr) + amount;
 	return reinterpret_cast<const pointer>(v);
 }
 
 template<typename pointer>
+[[nodiscard]]
 inline pointer offsetPointer(const pointer const ptr, const uint32_t& amount) noexcept requires std::is_pointer_v<pointer> && std::is_const_v<pointer>
 {
 	const uint8_t* v = reinterpret_cast<const uint8_t*>(ptr) + amount;
 	return reinterpret_cast<const pointer>(v);
 }
-    
+	
 std::vector<uint32_t> v_strings;
-inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
+inline void parseCMDL(const uint8_t * const& _In_ source, void** dest)
 {
 	const CMDL_header* header = reinterpret_cast<const CMDL_header*>(source);
 	std::cout << std::hex << "magic: " << _byteswap_ulong(header->magic) << '\n';
@@ -420,7 +426,7 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 
 	for (int i = 0; i < _byteswap_ulong(header->dataSectionCount); i++)
 	{
-		std::cout << std::dec << "data section " << i << ": " << _byteswap_ulong(offsetPointer(header, i * sizeof(header->dataSectionSize))->dataSectionSize) << std::endl;
+		std::cout << std::dec << "data section " << i << ": " << _byteswap_ulong(offsetPointer(header, i * sizeof(header->dataSectionSize))->dataSectionSize) << '\n';
 		dataSectionSizes.push_back(_byteswap_ulong(offsetPointer(header, i * sizeof(header->dataSectionSize))->dataSectionSize));
 	}
 
@@ -437,7 +443,7 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 
 		for (int i = 0; i < _byteswap_ulong(materialSet->textureIDs); i++)
 		{
-			std::cout << std::hex << "texture: " << _byteswap_ulong(offsetPointer(materialSet, sizeof(materialSet->textureIDs) + i * sizeof(materialSet->textureIDs))->textureIDs) << std::endl;
+			std::cout << std::hex << "texture: " << _byteswap_ulong(offsetPointer(materialSet, sizeof(materialSet->textureIDs) + i * sizeof(materialSet->textureIDs))->textureIDs) << '\n';
 		}
 
 		movePtr(materialSet, _byteswap_ulong(materialSet->textureIDs) * sizeof(materialSet->textureIDs));
@@ -448,7 +454,7 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 		{
 			std::cout << std::hex << "material end offset: "
 				<< _byteswap_ulong(offsetPointer(materialSet, sizeof(materialSet->materialEndOffsets) + i * sizeof(materialSet->materialEndOffsets))->materialEndOffsets)
-				<< std::endl;
+				<< '\n';
 			materialEndOffsets.push_back(_byteswap_ulong(offsetPointer(materialSet, sizeof(materialSet->materialEndOffsets) + i * sizeof(materialSet->materialEndOffsets))->materialEndOffsets));
 
 		}
@@ -467,7 +473,7 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 
 			for (int i = 0; i < _byteswap_ulong(currentMaterial->textureIndices); i++)
 			{
-				std::cout << std::hex << "texture index: " << _byteswap_ulong(offsetPointer(currentMaterial, sizeof(currentMaterial->textureIndices) + i * sizeof(currentMaterial->textureIndices))->textureIndices) << std::endl;
+				std::cout << std::hex << "texture index: " << _byteswap_ulong(offsetPointer(currentMaterial, sizeof(currentMaterial->textureIndices) + i * sizeof(currentMaterial->textureIndices))->textureIndices) << '\n';
 			}
 
 			movePtr(currentMaterial, sizeof(currentMaterial->textureIndices) * _byteswap_ulong(currentMaterial->textureIndices));
@@ -482,10 +488,9 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 
 				for (int i = 0; i < _byteswap_ulong(currentMaterial->konstColors); i++)
 				{
-					std::cout << std::hex << "konst color: " << _byteswap_ulong(offsetPointer(currentMaterial, sizeof(currentMaterial->konstColors) + i * sizeof(currentMaterial->konstColors))->konstColors) << std::endl;
+					std::cout << std::hex << "konst color: " << _byteswap_ulong(offsetPointer(currentMaterial, sizeof(currentMaterial->konstColors) + i * sizeof(currentMaterial->konstColors))->konstColors) << '\n';
 				}
 				movePtr(currentMaterial, sizeof(currentMaterial->konstColors) * _byteswap_ulong(currentMaterial->konstColors));
-
 			}
 			else
 			{
@@ -567,16 +572,16 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 	for (uint32_t i = 0; i < (normals - vertexCoords) / (sizeof(float) * 3); i++)
 	{
 		MyFile << "v " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 0) * sizeof(float)))) << " " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 1) * sizeof(float)))) << " " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 2) * sizeof(float)))) << "\n";
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 0) * sizeof(float)))) << ' ' <<
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 1) * sizeof(float)))) << ' ' <<
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(vertexCoords + (i * 3 + 2) * sizeof(float)))) << '\n';
 	}
 
 	for (uint32_t i = 0; i < (shortUVCoords - floatUVCoords) / (sizeof(float) * 2); i++)
 	{
 		MyFile << "vt " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(floatUVCoords + (i * 2 + 0) * sizeof(float)))) << " " <<
-			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(floatUVCoords + (i * 2 + 1) * sizeof(float)))) << "\n";
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(floatUVCoords + (i * 2 + 0) * sizeof(float)))) << ' ' <<
+			asFloat(_byteswap_ulong(*reinterpret_cast<const uint32_t*>(floatUVCoords + (i * 2 + 1) * sizeof(float)))) << '\n';
 	}
 
 
@@ -602,7 +607,16 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 
 	movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 5]);
 
+	struct vertex_tempC
+	{
+		//position, normal, tex0, text1
+		uint16_t position;
+		uint16_t normal;
+		uint16_t tex0;
+		uint16_t tex1;
+	};
 
+	std::vector<vertex_tempC> tempVB;
 	for (int surfaceNum = 0; surfaceNum < _byteswap_ulong(surfaceOffsets->surfaceCount); surfaceNum++)
 	{
 		const CMDL_SurfaceHeader* firstSurface = reinterpret_cast<const CMDL_SurfaceHeader*>(currentDataSection);
@@ -624,6 +638,7 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 		const uint32_t primitiveMaterialIndex = _byteswap_ulong(firstSurface->materialIndex);
 		const uint8_t* GXPrimitive = currentDataSection + pad32(sizeof(CMDL_SurfaceHeader) + _byteswap_ulong(firstSurface->extraDataSize));
 		movePtr(currentDataSection, dataSectionSizes[_byteswap_ulong(reinterpret_cast<const CMDL_header*>(source)->materialSetCount) + 6 + surfaceNum]);
+
 
 		for (int primitive = 0; true; primitive++)
 		{
@@ -736,54 +751,171 @@ inline void parseCMDL(const uint8_t*const _In_ &source, void* dest)
 					GXPrimitive += 2;
 				}
 			}
+			std::cout << __LINE__ << " " << vertexCount << '\n';
 			for (int i = 0; i < vertexCount; i++)
 			{
 				if (primitiveType == 0x98)
 				{
 					if (i >= 2)
 					{
-						MyFile << "f "
-							<< (obj.vertex_indices[i - 2] + 1) << '/' << (obj.tex0_indices[i - 2] + 1) << ' '
-							<< (obj.vertex_indices[i - 1] + 1) << '/' << (obj.tex0_indices[i - 1] + 1) << ' '
-							<< (obj.vertex_indices[i - 0] + 1) << '/' << (obj.tex0_indices[i - 0] + 1) << '\n';
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 2], 
+							obj.normal_indices[i - 2],
+							obj.tex0_indices[i - 2],
+							obj.tex1_indices[i - 2]
+						});
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 1],
+							obj.normal_indices[i - 1],
+							obj.tex0_indices[i - 1],
+							obj.tex1_indices[i - 1]
+						});
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 0],
+							obj.normal_indices[i - 0],
+							obj.tex0_indices[i - 0],
+							obj.tex1_indices[i - 0]
+						});
+						//MyFile << "f "
+						//	<< (obj.vertex_indices[i - 2] + 1) << '/' << (obj.tex0_indices[i - 2] + 1) << ' '
+						//	<< (obj.vertex_indices[i - 1] + 1) << '/' << (obj.tex0_indices[i - 1] + 1) << ' '
+						//	<< (obj.vertex_indices[i - 0] + 1) << '/' << (obj.tex0_indices[i - 0] + 1) << '\n';
 					}
 				}
 				else if (primitiveType == 0x90)
 				{
 					if (i % 3 == 2)
 					{
-						MyFile << "f "
-							<< (obj.vertex_indices[i - 2] + 1) << '/' << (obj.tex0_indices[i - 2] + 1) << ' '
-							<< (obj.vertex_indices[i - 1] + 1) << '/' << (obj.tex0_indices[i - 1] + 1) << ' '
-							<< (obj.vertex_indices[i - 0] + 1) << '/' << (obj.tex0_indices[i - 0] + 1) << '\n';
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 2],
+							obj.normal_indices[i - 2],
+							obj.tex0_indices[i - 2],
+							obj.tex1_indices[i - 2]
+						});
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 1],
+							obj.normal_indices[i - 1],
+							obj.tex0_indices[i - 1],
+							obj.tex1_indices[i - 1]
+						});
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 0],
+							obj.normal_indices[i - 0],
+							obj.tex0_indices[i - 0],
+							obj.tex1_indices[i - 0]
+						});
+						//MyFile << "f "
+						//	<< (obj.vertex_indices[i - 2] + 1) << '/' << (obj.tex0_indices[i - 2] + 1) << ' '
+						//	<< (obj.vertex_indices[i - 1] + 1) << '/' << (obj.tex0_indices[i - 1] + 1) << ' '
+						//	<< (obj.vertex_indices[i - 0] + 1) << '/' << (obj.tex0_indices[i - 0] + 1) << '\n';
 					}
 				}
 				else if (primitiveType == 0xA0)
 				{
 					if (i >= 2)
 					{
-						MyFile << "f "
-							<< (obj.vertex_indices[0] + 1) << '/' << (obj.tex0_indices[0] + 1) << ' '
-							<< (obj.vertex_indices[i - 1] + 1) << '/' << (obj.tex0_indices[i - 1] + 1) << ' '
-							<< (obj.vertex_indices[i - 0] + 1) << '/' << (obj.tex0_indices[i - 0] + 1) << '\n';
+						tempVB.push_back
+						({
+							obj.vertex_indices[0],
+							obj.normal_indices[0],
+							obj.tex0_indices[0],
+							obj.tex1_indices[0]
+						});
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 1],
+							obj.normal_indices[i - 1],
+							obj.tex0_indices[i - 1],
+							obj.tex1_indices[i - 1]
+						});
+						tempVB.push_back
+						({
+							obj.vertex_indices[i - 0],
+							obj.normal_indices[i - 0],
+							obj.tex0_indices[i - 0],
+							obj.tex1_indices[i - 0]
+						});
+						//MyFile << "f "
+						//	<< (obj.vertex_indices[0] + 1) << '/' << (obj.tex0_indices[0] + 1) << ' '
+						//	<< (obj.vertex_indices[i - 1] + 1) << '/' << (obj.tex0_indices[i - 1] + 1) << ' '
+						//	<< (obj.vertex_indices[i - 0] + 1) << '/' << (obj.tex0_indices[i - 0] + 1) << '\n';
 					}
 				}
 			}
 			if (currentDataSection - GXPrimitive < 35)
 				break;
-			else
-			{
+			//else
+			//{
 				//std::cout << "NUM LEFT: " << (currentDataSection - GXPrimitive) << '\n';
-			}
+			//}
 		}
+		
 	}
+	/*
+		* tempVB is a buffer of 16 bit indices which needs to be converted to the PC format.
+		* this is where the classic problem starts
+		*
+		* resource buffers:
+		*
+		* vertexCoords
+		* normals
+		* vertexColors
+		* floatUVCoords
+		* shortUVCoords
+		*
+		* unavoidably, the resource buffers need to be rebuilt
+		*
+		*/
+
+		//at the end these structures will be done:
+
+		//std::vector<DirectX::XMFLOAT3> native_positions;
+		//std::vector<DirectX::XMFLOAT3> native_normals;
+		//std::vector<DirectX::XMFLOAT2> native_tex0;
+		//std::vector<DirectX::XMFLOAT2> native_tex1;
+		//std::vector<uint16_t> native_indices;
+	* dest = new CMDL_native();//malloc(sizeof(CMDL_native));
+
+	CMDL_native* nativeObj = reinterpret_cast<CMDL_native*>(*dest);
+	//right now I need to make this out of these:
+	/*
+	*
+	* vertexCoords
+	* normals
+	* vertexColors
+	* floatUVCoords
+	* shortUVCoords
+	* tempVB
+	*
+	*/
+	nativeObj->native_indices.resize(tempVB.size());
+	nativeObj->native_positions.resize(tempVB.size());
+	nativeObj->native_normals.resize(tempVB.size());
+	nativeObj->native_tex0.resize(tempVB.size());
+	nativeObj->native_tex1.resize(tempVB.size());
+	for (uint16_t i = 0; i < tempVB.size(); i++)
+	{
+		nativeObj->native_indices[i] = i;
+		//std::cout << i << "<=>" << nativeObj->native_indices[i] << '\n';
+		nativeObj->native_positions[i] = reinterpret_cast<const DirectX::XMFLOAT3*>(vertexCoords)[tempVB[i].position];
+		nativeObj->native_normals[i] = reinterpret_cast<const DirectX::XMFLOAT3*>(normals)[tempVB[i].normal];
+		nativeObj->native_tex0[i] = reinterpret_cast<const DirectX::XMFLOAT2*>(floatUVCoords)[tempVB[i].tex0];
+		nativeObj->native_tex1[i] = reinterpret_cast<const DirectX::XMFLOAT2*>(floatUVCoords)[tempVB[i].tex1];
+	}
+	std::cout << "yni3: " << nativeObj->native_indices[25] << '\n';
 	MyFile << std::flush;
 	MyFile.close();
-
+	return;
 
 }
 uint32_t temp_size = 0;
-uint8_t* indexPak(const wchar_t* pakname)
+uint8_t* indexPak(const wchar_t* const& _In_ pakname)
 {
 	HANDLE file = CreateFileW(
 		pakname,
@@ -835,7 +967,7 @@ uint8_t* indexPak(const wchar_t* pakname)
 			std::cout << *((char*)address + offset + 0xC + x);
 		}
 		std::cout << '\n';
-		offset += 0xC + _byteswap_ulong(*((uint32_t*)(address + offset + 0x8)));
+		offset += 0xCLL + _byteswap_ulong(*((uint32_t*)(address + offset + 0x8)));
 	}
 	const uint32_t unnamedResources = _byteswap_ulong(*((uint32_t*)(address + offset)));
 	unnamedAssetTable_entries += unnamedResources;
@@ -844,7 +976,7 @@ uint8_t* indexPak(const wchar_t* pakname)
 
 	unnamedAssetTable = reinterpret_cast<unnamedAssetTableEntry*>(VirtualAlloc(nullptr, unnamedResources * sizeof(unnamedAssetTableEntry), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
 
-	const unnamedAsset* unnamedResourceAnchor = (unnamedAsset*)(address + offset);
+	const unnamedAsset* unnamedResourceAnchor = reinterpret_cast<const unnamedAsset*>(address + offset);
 
 	int count_CMDL = 0;
 	int count_TXTR = 0;
@@ -985,7 +1117,7 @@ uint8_t* indexPak(const wchar_t* pakname)
 	std::cout << std::dec << "duplicates detected: " << (unnamedResources - hashTable.size()) << '\n';
 	return address;
 }
-void* loadAsset(const uint8_t* pakBegin, uint32_t id)
+void* loadAsset(const uint8_t* pakBegin, const uint32_t& id)
 {
 	int targetIndex = 0;
 	for (; targetIndex < unnamedAssetTable_entries; targetIndex++)
@@ -1023,20 +1155,20 @@ found:
 
 		switch (result)
 		{
-		case Z_OK:std::cout << "successfully extracted" << std::endl; break;
-		case Z_STREAM_END:std::cout << "FATAL ERROR Z_STREAM_END" << std::endl; break;
-		case Z_NEED_DICT:std::cout << "FATAL ERROR Z_NEED_DICT" << std::endl; break;
-		case Z_ERRNO:std::cout << "FATAL ERROR Z_ERRNO" << std::endl; break;
-		case Z_STREAM_ERROR:std::cout << "FATAL ERROR Z_STREAM_ERROR" << std::endl; break;
-		case Z_DATA_ERROR:std::cout << "FATAL ERROR Z_DATA_ERROR" << std::endl; break;
-		case Z_MEM_ERROR:std::cout << "FATAL ERROR Z_MEM_ERROR" << std::endl; break;
-		case Z_BUF_ERROR:std::cout << "FATAL ERROR Z_BUF_ERROR" << std::endl; break;
-		case Z_VERSION_ERROR:std::cout << "FATAL ERROR Z_VERSION_ERROR" << std::endl; break;
+		case Z_OK:std::cout << "successfully extracted\n"; break;
+		case Z_STREAM_END:std::cout << "FATAL ERROR Z_STREAM_END\n"; break;
+		case Z_NEED_DICT:std::cout << "FATAL ERROR Z_NEED_DICT\n"; break;
+		case Z_ERRNO:std::cout << "FATAL ERROR Z_ERRNO\n"; break;
+		case Z_STREAM_ERROR:std::cout << "FATAL ERROR Z_STREAM_ERROR\n"; break;
+		case Z_DATA_ERROR:std::cout << "FATAL ERROR Z_DATA_ERROR\n"; break;
+		case Z_MEM_ERROR:std::cout << "FATAL ERROR Z_MEM_ERROR\n"; break;
+		case Z_BUF_ERROR:std::cout << "FATAL ERROR Z_BUF_ERROR\n"; break;
+		case Z_VERSION_ERROR:std::cout << "FATAL ERROR Z_VERSION_ERROR\n"; break;
 		}
 	}
 	else
 	{
-		uint32_t uncompressed_size = _byteswap_ulong(unnamedAssetTable[targetIndex].foreignData->size);
+		const uint32_t uncompressed_size = _byteswap_ulong(unnamedAssetTable[targetIndex].foreignData->size);
 		uncompressed_data = reinterpret_cast<uint8_t*>(malloc(uncompressed_size));
 
 		memcpy(uncompressed_data, pakBegin + _byteswap_ulong(unnamedAssetTable[targetIndex].foreignData->offset), uncompressed_size);
@@ -1054,6 +1186,7 @@ found:
 		&& unnamedAssetTable[targetIndex].foreignData->type.data[3] == 'L')
 	{
 		parseCMDL(uncompressed_data, &unnamedAssetTable[targetIndex].nativeData);
+		std::cout << "yk7: " << reinterpret_cast<CMDL_native*>(unnamedAssetTable[targetIndex].nativeData)->native_indices[53] << '\n';
 	}
 	else if (unnamedAssetTable[targetIndex].foreignData->type.data[0] == 'T'
 		&& unnamedAssetTable[targetIndex].foreignData->type.data[1] == 'X'
